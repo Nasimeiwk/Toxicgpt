@@ -832,3 +832,330 @@
                     });
                     
                     // Scroll to keep the new content in view
+                    scrollToBottom();
+
+                    // Add delay for typing animation
+                    if (state.typingAnimation) {
+                        await new Promise(resolve => setTimeout(resolve, 20));
+                    }
+                }
+
+                // Update the message in state
+                if (state.currentChatId && state.chats[state.currentChatId]) {
+                    const messageIndex = state.chats[state.currentChatId].messages.findIndex(m => m.id === messageId);
+                    if (messageIndex !== -1) {
+                        state.chats[state.currentChatId].messages[messageIndex].content = responseText;
+                    }
+                }
+            }
+
+            // Scroll to bottom of chat
+            function scrollToBottom() {
+                elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+            }
+
+            // Send message to AI
+            async function sendMessage(content) {
+                if (!content.trim()) return;
+
+                // Check if API key is set
+                if (!state.apiKey) {
+                    alert('Please set your OpenRouter API key in the model selector.');
+                    elements.modelModal.style.display = 'flex';
+                    return;
+                }
+
+                // Create new chat if needed
+                if (!state.currentChatId) {
+                    createNewChat();
+                }
+
+                // Add user message
+                const userMessage = {
+                    id: 'msg_' + Date.now(),
+                    role: 'user',
+                    content: content,
+                    timestamp: new Date().toISOString()
+                };
+
+                state.chats[state.currentChatId].messages.push(userMessage);
+                addMessageToUI(userMessage);
+                scrollToBottom();
+
+                // Clear input
+                elements.messageInput.value = '';
+                elements.messageInput.style.height = 'auto';
+
+                // Show typing indicator
+                elements.typingIndicator.classList.remove('hidden');
+                scrollToBottom();
+
+                // Disable send button
+                elements.sendButton.disabled = true;
+
+                try {
+                    // Prepare messages for API
+                    const messages = [
+                        { role: 'system', content: state.systemPrompt },
+                        ...state.chats[state.currentChatId].messages.map(m => ({
+                            role: m.role,
+                            content: m.content
+                        }))
+                    ];
+
+                    // Call OpenRouter API
+                    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${state.apiKey}`,
+                            'HTTP-Referer': window.location.href,
+                            'X-Title': 'Universal AI Chat'
+                        },
+                        body: JSON.stringify({
+                            model: state.currentModel,
+                            messages: messages,
+                            stream: false
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.error?.message || `API Error: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    const aiResponse = data.choices[0].message.content;
+
+                    // Hide typing indicator
+                    elements.typingIndicator.classList.add('hidden');
+
+                    // Add AI message
+                    const aiMessage = {
+                        id: 'msg_' + Date.now(),
+                        role: 'assistant',
+                        content: aiResponse,
+                        timestamp: new Date().toISOString()
+                    };
+
+                    state.chats[state.currentChatId].messages.push(aiMessage);
+                    const aiMessageDiv = addMessageToUI(aiMessage, false);
+
+                    // Stream the response with typing animation if enabled
+                    if (state.typingAnimation) {
+                        await streamResponse(aiResponse, aiMessageDiv, aiMessage.id);
+                    }
+
+                    scrollToBottom();
+
+                    // Save state
+                    saveStateToStorage();
+                    renderChatHistory();
+
+                } catch (error) {
+                    console.error('Error sending message:', error);
+
+                    // Hide typing indicator
+                    elements.typingIndicator.classList.add('hidden');
+
+                    // Show error message
+                    const errorMessage = {
+                        id: 'msg_' + Date.now(),
+                        role: 'assistant',
+                        content: `**Error**: ${error.message}. Please check your API key and try again.`,
+                        timestamp: new Date().toISOString()
+                    };
+
+                    state.chats[state.currentChatId].messages.push(errorMessage);
+                    addMessageToUI(errorMessage);
+                    scrollToBottom();
+                } finally {
+                    // Re-enable send button
+                    elements.sendButton.disabled = false;
+                    elements.messageInput.focus();
+                }
+            }
+
+            // Toggle sidebar
+            function toggleSidebar() {
+                state.isSidebarOpen = !state.isSidebarOpen;
+
+                if (state.isSidebarOpen) {
+                    elements.sidebar.classList.remove('-translate-x-full');
+                    elements.sidebarOverlay.style.display = 'block';
+                } else {
+                    elements.sidebar.classList.add('-translate-x-full');
+                    elements.sidebarOverlay.style.display = 'none';
+                }
+            }
+
+            // Event Listeners
+
+            // Send message
+            elements.sendButton.addEventListener('click', () => {
+                sendMessage(elements.messageInput.value);
+            });
+
+            // Send on Enter (but not Shift+Enter)
+            elements.messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage(elements.messageInput.value);
+                }
+            });
+
+            // Auto-resize textarea
+            elements.messageInput.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+            });
+
+            // Sidebar toggle
+            elements.toggleSidebar.addEventListener('click', toggleSidebar);
+            elements.sidebarOverlay.addEventListener('click', toggleSidebar);
+
+            // New chat
+            elements.newChatButton.addEventListener('click', () => {
+                createNewChat();
+                if (window.innerWidth < 1024) {
+                    toggleSidebar();
+                }
+            });
+
+            // Clear chat
+            elements.clearChatButton.addEventListener('click', clearCurrentChat);
+
+            // System prompt editing
+            elements.editPromptButton.addEventListener('click', () => {
+                elements.systemPromptDisplay.classList.add('hidden');
+                elements.systemPromptEditor.classList.remove('hidden');
+                elements.promptTextarea.value = state.systemPrompt;
+                elements.promptTextarea.focus();
+            });
+
+            elements.cancelPromptButton.addEventListener('click', () => {
+                elements.systemPromptDisplay.classList.remove('hidden');
+                elements.systemPromptEditor.classList.add('hidden');
+            });
+
+            elements.savePromptButton.addEventListener('click', () => {
+                state.systemPrompt = elements.promptTextarea.value;
+                elements.systemPromptDisplay.textContent = state.systemPrompt;
+                elements.systemPromptDisplay.classList.remove('hidden');
+                elements.systemPromptEditor.classList.add('hidden');
+
+                // Update current chat's system prompt
+                if (state.currentChatId && state.chats[state.currentChatId]) {
+                    state.chats[state.currentChatId].systemPrompt = state.systemPrompt;
+                }
+
+                saveStateToStorage();
+            });
+
+            // Model selection
+            elements.changeModelButton.addEventListener('click', () => {
+                elements.modelModal.style.display = 'flex';
+                elements.apiKeyInput.value = state.apiKey;
+            });
+
+            elements.closeModelModal.addEventListener('click', () => {
+                elements.modelModal.style.display = 'none';
+            });
+
+            elements.modelOptions.forEach(option => {
+                option.addEventListener('click', () => {
+                    state.currentModel = option.dataset.model;
+                    updateModelInfo();
+                });
+            });
+
+            elements.saveModelButton.addEventListener('click', () => {
+                state.apiKey = elements.apiKeyInput.value.trim();
+
+                if (!state.apiKey) {
+                    alert('Please enter your OpenRouter API key.');
+                    return;
+                }
+
+                // Save API key if checkbox is checked
+                if (document.getElementById('save-key').checked) {
+                    localStorage.setItem('ai_chat_api_key', state.apiKey);
+                } else {
+                    localStorage.removeItem('ai_chat_api_key');
+                }
+
+                // Update current chat's model
+                if (state.currentChatId && state.chats[state.currentChatId]) {
+                    state.chats[state.currentChatId].model = state.currentModel;
+                }
+
+                saveStateToStorage();
+                elements.modelModal.style.display = 'none';
+            });
+
+            // Settings
+            elements.settingsBtn.addEventListener('click', () => {
+                elements.settingsModal.style.display = 'flex';
+            });
+
+            elements.closeSettings.addEventListener('click', () => {
+                elements.settingsModal.style.display = 'none';
+            });
+
+            elements.closeSettingsBtn.addEventListener('click', () => {
+                elements.settingsModal.style.display = 'none';
+            });
+
+            // Settings toggles
+            document.getElementById('streaming-toggle').addEventListener('change', (e) => {
+                state.streamingEnabled = e.target.checked;
+                saveStateToStorage();
+            });
+
+            document.getElementById('typing-animation-toggle').addEventListener('change', (e) => {
+                state.typingAnimation = e.target.checked;
+                saveStateToStorage();
+            });
+
+            // Export chats
+            document.getElementById('export-chats').addEventListener('click', () => {
+                const dataStr = JSON.stringify(state.chats, null, 2);
+                const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(dataBlob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `ai-chats-export-${new Date().toISOString().split('T')[0]}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+            });
+
+            // Clear all data
+            document.getElementById('clear-data').addEventListener('click', () => {
+                if (confirm('This will delete ALL chats and settings. This cannot be undone. Are you sure?')) {
+                    localStorage.clear();
+                    location.reload();
+                }
+            });
+
+            // Suggestion buttons
+            elements.suggestionButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const text = btn.querySelector('.font-medium').textContent;
+                    elements.messageInput.value = text;
+                    elements.messageInput.focus();
+                });
+            });
+
+            // Initialize app
+            loadStateFromStorage();
+
+            // If no API key, show model modal
+            if (!state.apiKey) {
+                setTimeout(() => {
+                    elements.modelModal.style.display = 'flex';
+                }, 500);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "universal-ai-chat",
+  "version": "1.0.0",
+  "description": "Universal AI Chat Interface using OpenRouter API",
+  "main": "index.html",
+  "scripts": {
+    "dev": "python3 -m http.server 8080 || python -m http.server 8080",
+    "start": "python3 -m http.server 8080 || python -m http.server 8080"
+  },
+  "keywords": [
+    "ai",
+    "chat",
+    "openrouter",
+    "chatgpt",
+    "claude",
+    "gemini"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {}
+}
